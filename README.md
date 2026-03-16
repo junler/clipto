@@ -1,8 +1,13 @@
 # Clipto
 
-> 一款轻量的 macOS 剪贴板历史管理工具，常驻菜单栏，随时快速访问复制记录。
-> 可以通过brew安装：brew install --cask junler/clipto/clipto
-> https://github.com/junler/homebrew-clipto/
+> 一款轻量的 macOS 剪贴板历史管理工具，常驻菜单栏，随时快速访问复制记录。  
+
+### 可以通过brew安装：
+
+```bash
+brew install --cask junler/clipto/clipto 
+``` 
+- https://github.com/junler/homebrew-clipto/
 
 ## 功能特性
 
