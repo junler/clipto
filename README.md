@@ -1,6 +1,8 @@
 # Clipto
 
 > 一款轻量的 macOS 剪贴板历史管理工具，常驻菜单栏，随时快速访问复制记录。
+> 可以通过brew安装：brew install --cask junler/clipto/clipto
+> https://github.com/junler/homebrew-clipto/
 
 ## 功能特性
 
@@ -61,9 +63,16 @@ Clipto/
 └── package.json
 ```
 
-## 推荐 IDE
+## 问题
 
-[VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+- 提示文件已损坏，可以使用这个命令修复
+xattr -rd com.apple.quarantine /Applications/clipto.app
+
+- 软件图标没有出现在启动台
+defaults write com.apple.dock ResetLaunchPad -bool true; killall Dock
+
+- 更新cask的文件
+brew update
 
 ## License
 
