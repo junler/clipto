@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
 interface ClipboardItem {
@@ -118,14 +119,436 @@ function useToast() {
   return { toast, show };
 }
 
+// ─── 平台设置 ─────────────────────────────────────────────
+export type TranslatePlatform = "google" | "deepl" | "bing" | "youdao" | "baidu";
+export type AiPlatform =
+  | "chatgpt"
+  | "claude"
+  | "copilot"
+  | "perplexity"
+  | "gemini"
+  | "deepseek"
+  | "kimi"
+  | "doubao"
+  | "tongyi"
+  | "yuanbao"
+  | "wenxin";
+
+const PLATFORM_OPTIONS: { value: TranslatePlatform; label: string; icon: string }[] = [
+  { value: "google", label: "Google 翻译", icon: "🌐" },
+  { value: "deepl",  label: "DeepL",       icon: "🔵" },
+  { value: "bing",   label: "Bing 翻译",   icon: "🔷" },
+  { value: "youdao", label: "有道翻译",     icon: "📗" },
+  { value: "baidu",  label: "百度翻译",     icon: "🔴" },
+];
+
+const AI_OPTIONS: { value: AiPlatform; label: string; icon: string }[] = [
+  { value: "chatgpt",    label: "ChatGPT",    icon: "🟢" },
+  { value: "claude",     label: "Claude",     icon: "🟠" },
+  { value: "copilot",    label: "Copilot",    icon: "🟣" },
+  { value: "perplexity", label: "Perplexity", icon: "⚫" },
+  { value: "gemini",     label: "Gemini",     icon: "🔵" },
+  { value: "deepseek",   label: "DeepSeek",   icon: "🔷" },
+  { value: "kimi",       label: "Kimi",       icon: "🌙" },
+  { value: "doubao",     label: "豆包",       icon: "🫘" },
+  { value: "tongyi",     label: "通义千问",   icon: "📘" },
+  { value: "yuanbao",    label: "腾讯元宝",   icon: "💠" },
+  { value: "wenxin",     label: "文心一言",   icon: "🧠" },
+];
+
+const TRANSLATE_STORAGE_KEY = "clipto_translate_platform";
+const AI_STORAGE_KEY = "clipto_ai_platform";
+const OPEN_ROUTE_KEY = "clipto_open_route";
+const OPEN_SETTINGS_TAB_KEY = "clipto_settings_tab";
+const EMAIL_RECEIVERS_KEY = "clipto_email_receivers";
+const SMTP_HOST_KEY = "clipto_smtp_host";
+const SMTP_PORT_KEY = "clipto_smtp_port";
+const SMTP_USERNAME_KEY = "clipto_smtp_username";
+const SMTP_PASSWORD_KEY = "clipto_smtp_password";
+const SMTP_USE_TLS_KEY = "clipto_smtp_use_tls";
+
+function useTranslatePlatform() {
+  const [platform, setPlatformState] = useState<TranslatePlatform>(
+    () => (localStorage.getItem(TRANSLATE_STORAGE_KEY) as TranslatePlatform) ?? "google"
+  );
+  const setPlatform = (p: TranslatePlatform) => {
+    localStorage.setItem(TRANSLATE_STORAGE_KEY, p);
+    setPlatformState(p);
+  };
+  return { platform, setPlatform };
+}
+
+function useAiPlatform() {
+  const [platform, setPlatformState] = useState<AiPlatform>(
+    () => (localStorage.getItem(AI_STORAGE_KEY) as AiPlatform) ?? "chatgpt"
+  );
+  const setPlatform = (p: AiPlatform) => {
+    localStorage.setItem(AI_STORAGE_KEY, p);
+    setPlatformState(p);
+  };
+  return { platform, setPlatform };
+}
+
+function useEmailSettings() {
+  const [receiverEmails, setReceiverEmailsState] = useState<string>(
+    () => localStorage.getItem(EMAIL_RECEIVERS_KEY) ?? ""
+  );
+
+  const setReceiverEmails = (value: string) => {
+    localStorage.setItem(EMAIL_RECEIVERS_KEY, value);
+    setReceiverEmailsState(value);
+  };
+
+  return { receiverEmails, setReceiverEmails };
+}
+
+function useSmtpSettings() {
+  const [smtpHost, setSmtpHostState] = useState<string>(() => localStorage.getItem(SMTP_HOST_KEY) ?? "");
+  const [smtpPort, setSmtpPortState] = useState<string>(() => localStorage.getItem(SMTP_PORT_KEY) ?? "465");
+  const [smtpUsername, setSmtpUsernameState] = useState<string>(() => localStorage.getItem(SMTP_USERNAME_KEY) ?? "");
+  const [smtpPassword, setSmtpPasswordState] = useState<string>(() => localStorage.getItem(SMTP_PASSWORD_KEY) ?? "");
+  const [smtpUseTls, setSmtpUseTlsState] = useState<boolean>(
+    () => (localStorage.getItem(SMTP_USE_TLS_KEY) ?? "true") === "true"
+  );
+
+  const setSmtpHost = (value: string) => {
+    localStorage.setItem(SMTP_HOST_KEY, value);
+    setSmtpHostState(value);
+  };
+
+  const setSmtpPort = (value: string) => {
+    localStorage.setItem(SMTP_PORT_KEY, value);
+    setSmtpPortState(value);
+  };
+
+  const setSmtpUsername = (value: string) => {
+    localStorage.setItem(SMTP_USERNAME_KEY, value);
+    setSmtpUsernameState(value);
+  };
+
+  const setSmtpPassword = (value: string) => {
+    localStorage.setItem(SMTP_PASSWORD_KEY, value);
+    setSmtpPasswordState(value);
+  };
+
+  const setSmtpUseTls = (value: boolean) => {
+    localStorage.setItem(SMTP_USE_TLS_KEY, String(value));
+    setSmtpUseTlsState(value);
+  };
+
+  return {
+    smtpHost,
+    setSmtpHost,
+    smtpPort,
+    setSmtpPort,
+    smtpUsername,
+    setSmtpUsername,
+    smtpPassword,
+    setSmtpPassword,
+    smtpUseTls,
+    setSmtpUseTls,
+  };
+}
+
+function parseEmails(raw: string): string[] {
+  return raw
+    .split(/[\n,;]+/)
+    .map((email) => email.trim())
+    .filter(Boolean);
+}
+
+function buildTranslateUrl(text: string, platform: TranslatePlatform): string {
+  const encoded = encodeURIComponent(text);
+  switch (platform) {
+    case "google":  return `https://translate.google.com/?sl=auto&tl=zh-CN&text=${encoded}&op=translate`;
+    case "deepl":   return `https://www.deepl.com/translator#auto/zh/${encoded}`;
+    case "bing":    return `https://www.bing.com/translator?text=${encoded}&from=auto&to=zh-Hans`;
+    case "youdao":  return `https://fanyi.youdao.com/result?word=${encoded}&l=auto2zh-CHS`;
+    case "baidu":   return `https://fanyi.baidu.com/#auto/zh/${encoded}`;
+  }
+}
+
+function buildAiUrl(text: string, platform: AiPlatform): string {
+  const encoded = encodeURIComponent(text);
+  switch (platform) {
+    case "chatgpt":
+      return `https://chatgpt.com/?q=${encoded}`;
+    case "claude":
+      return `https://claude.ai/new`;
+    case "copilot":
+      return `https://copilot.microsoft.com/?q=${encoded}`;
+    case "perplexity":
+      return `https://www.perplexity.ai/search/new?q=${encoded}`;
+    case "gemini":
+      return `https://gemini.google.com/app`;
+    case "deepseek":
+      return `https://chat.deepseek.com/`;
+    case "kimi":
+      return `https://kimi.moonshot.cn/`;
+    case "doubao":
+      return `https://www.doubao.com/chat/`;
+    case "tongyi":
+      return `https://tongyi.aliyun.com/qianwen/`;
+    case "yuanbao":
+      return `https://yuanbao.tencent.com/`;
+    case "wenxin":
+      return `https://yiyan.baidu.com/`;
+  }
+}
+
+// ─── 设置页 ───────────────────────────────────────────────────
+type SettingsTab = "translate" | "ai" | "email" | "about";
+
+const SETTINGS_NAV: { key: SettingsTab; icon: string; label: string }[] = [
+  { key: "translate", icon: "🌐", label: "翻译平台" },
+  { key: "ai",        icon: "🤖", label: "AI 助手" },
+  { key: "email",     icon: "📧", label: "邮件配置" },
+  { key: "about",     icon: "ℹ️",  label: "关于" },
+];
+
+function SettingsPage({ onBack }: { onBack: () => void }) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
+    const saved = localStorage.getItem(OPEN_SETTINGS_TAB_KEY) as SettingsTab | null;
+    if (saved) { localStorage.removeItem(OPEN_SETTINGS_TAB_KEY); return saved; }
+    return "translate";
+  });
+  const { platform: translatePlatform, setPlatform: setTranslatePlatform } = useTranslatePlatform();
+  const { platform: aiPlatform, setPlatform: setAiPlatform } = useAiPlatform();
+  const { receiverEmails, setReceiverEmails } = useEmailSettings();
+  const {
+    smtpHost, setSmtpHost,
+    smtpPort, setSmtpPort,
+    smtpUsername, setSmtpUsername,
+    smtpPassword, setSmtpPassword,
+    smtpUseTls, setSmtpUseTls,
+  } = useSmtpSettings();
+
+  return (
+    <div className="settings-page">
+      {/* 顶部标题栏 */}
+      <header className="header settings-page-header">
+        <div className="header-title">
+          <span className="header-icon">⚙️</span>
+          <h1>设置</h1>
+        </div>
+        <div className="header-actions">
+          <button className="btn-clear" onClick={onBack}>← 返回</button>
+        </div>
+      </header>
+
+      {/* 双栏主体 */}
+      <div className="settings-layout">
+        {/* 左侧导航 */}
+        <nav className="settings-nav">
+          {SETTINGS_NAV.map((item) => (
+            <button
+              key={item.key}
+              className={`settings-nav-item ${activeTab === item.key ? "active" : ""}`}
+              onClick={() => setActiveTab(item.key)}
+            >
+              <span className="settings-nav-icon">{item.icon}</span>
+              <span className="settings-nav-label">{item.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        {/* 右侧内容区 */}
+        <div className="settings-content">
+
+          {/* 翻译平台 */}
+          {activeTab === "translate" && (
+            <div className="settings-section-wrap">
+              <div className="settings-section-title">默认翻译平台</div>
+              <p className="settings-section-desc">点击条目快速切换，翻译按钮将自动使用所选平台打开。</p>
+              <div className="settings-options-grid">
+                {PLATFORM_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    className={`settings-option-card ${translatePlatform === opt.value ? "active" : ""}`}
+                    onClick={() => setTranslatePlatform(opt.value)}
+                  >
+                    <span className="settings-option-card-icon">{opt.icon}</span>
+                    <span className="settings-option-card-label">{opt.label}</span>
+                    {translatePlatform === opt.value && <span className="settings-option-card-check">✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* AI 助手 */}
+          {activeTab === "ai" && (
+            <div className="settings-section-wrap">
+              <div className="settings-section-title">默认 AI 助手</div>
+              <p className="settings-section-desc">点击条目快速切换，AI 按钮将自动使用所选平台打开。</p>
+              <div className="settings-options-grid">
+                {AI_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    className={`settings-option-card ${aiPlatform === opt.value ? "active" : ""}`}
+                    onClick={() => setAiPlatform(opt.value)}
+                  >
+                    <span className="settings-option-card-icon">{opt.icon}</span>
+                    <span className="settings-option-card-label">{opt.label}</span>
+                    {aiPlatform === opt.value && <span className="settings-option-card-check">✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 邮件配置 */}
+          {activeTab === "email" && (
+            <div className="settings-section-wrap">
+              <div className="settings-section-title">邮件收件人</div>
+              <p className="settings-section-desc">第一个地址为收件人（To），其余自动添加为抄送（Cc）。</p>
+              <div className="settings-form-group">
+                <label className="settings-input-label">收件人邮箱</label>
+                <textarea
+                  className="settings-textarea"
+                  placeholder="每行或用逗号/分号分隔一个邮箱地址"
+                  value={receiverEmails}
+                  onChange={(e) => setReceiverEmails(e.target.value)}
+                  rows={3}
+                />
+              </div>
+
+              <div className="settings-divider" />
+              <div className="settings-section-title">SMTP 发信配置</div>
+              <p className="settings-section-desc">用于应用直接发信，请填写邮箱服务商提供的 SMTP 信息。</p>
+
+              <div className="settings-form-row">
+                <div className="settings-form-group flex-3">
+                  <label className="settings-input-label">SMTP 主机</label>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    placeholder="例如 smtp.qq.com"
+                    value={smtpHost}
+                    onChange={(e) => setSmtpHost(e.target.value)}
+                  />
+                </div>
+                <div className="settings-form-group flex-1">
+                  <label className="settings-input-label">端口</label>
+                  <input
+                    className="settings-input"
+                    type="number"
+                    placeholder="465"
+                    value={smtpPort}
+                    onChange={(e) => setSmtpPort(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="settings-form-row">
+                <div className="settings-form-group flex-1">
+                  <label className="settings-input-label">用户名</label>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    placeholder="通常是邮箱账号"
+                    value={smtpUsername}
+                    onChange={(e) => setSmtpUsername(e.target.value)}
+                  />
+                </div>
+                <div className="settings-form-group flex-1">
+                  <label className="settings-input-label">密码 / 授权码</label>
+                  <input
+                    className="settings-input"
+                    type="password"
+                    placeholder="邮箱授权码或密码"
+                    value={smtpPassword}
+                    onChange={(e) => setSmtpPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <label className="settings-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={smtpUseTls}
+                  onChange={(e) => setSmtpUseTls(e.target.checked)}
+                />
+                <span>启用 TLS / SSL 加密</span>
+              </label>
+
+              <p className="settings-hint">💡 QQ 邮箱请使用授权码而非登录密码，端口推荐 465（SSL）或 587（STARTTLS）。</p>
+            </div>
+          )}
+
+          {/* 关于 */}
+          {activeTab === "about" && (
+            <div className="settings-section-wrap">
+              <div className="about-app-header">
+                <div className="about-app-icon">📋</div>
+                <div>
+                  <div className="about-app-name">Clipto</div>
+                  <div className="about-app-version">版本 0.2.0</div>
+                </div>
+              </div>
+
+              <p className="about-app-desc">
+                Clipto 是一款轻量级剪贴板历史管理工具，基于 Tauri + React 构建，常驻系统托盘，快速访问、编辑并发送你的剪贴板内容。
+              </p>
+
+              <div className="about-info-list">
+                <div className="about-info-row">
+                  <span className="about-info-key">开发者</span>
+                  <span className="about-info-val">junler</span>
+                </div>
+                <div className="about-info-row">
+                  <span className="about-info-key">技术栈</span>
+                  <span className="about-info-val">Tauri 2 · React · TypeScript</span>
+                </div>
+                <div className="about-info-row">
+                  <span className="about-info-key">标识符</span>
+                  <span className="about-info-val">com.junler.clipto</span>
+                </div>
+                <div className="about-info-row">
+                  <span className="about-info-key">发布年份</span>
+                  <span className="about-info-val">2026</span>
+                </div>
+              </div>
+
+              <div className="settings-section-title" style={{ marginTop: 4 }}>主要功能</div>
+              <div className="about-features">
+                {[
+                  { icon: "⚡", text: "实时监听剪贴板，自动记录历史" },
+                  { icon: "📌", text: "置顶常用条目，优先展示" },
+                  { icon: "✏️", text: "在线编辑内容，支持一键还原" },
+                  { icon: "🌐", text: "快速跳转翻译平台" },
+                  { icon: "🤖", text: "一键发送至 AI 助手" },
+                  { icon: "📧", text: "直接通过 SMTP 发送邮件" },
+                  { icon: "🔍", text: "全文搜索历史记录" },
+                  { icon: "🌙", text: "支持深色模式自动切换" },
+                ].map((f, i) => (
+                  <div key={i} className="about-feature-item">
+                    <span className="about-feature-icon">{f.icon}</span>
+                    <span className="about-feature-text">{f.text}</span>
+                  </div>
+                ))}
+              </div>
+
+              <p className="settings-hint" style={{ marginTop: 2 }}>© 2026 junler · 保留所有权利</p>
+            </div>
+          )}
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── 弹框页（Popup）─────────────────────────────────────────
 function PopupPage() {
-  const { history, handleCopy, handleClear } = useClipboard();
+  const { history, handleCopy } = useClipboard();
   const { toast, show } = useToast();
   const [copiedId, setCopiedId] = useState<number | null>(null);
-  const { open: openClearDialog, Dialog: ClearDialog } = useConfirmDialog(
-    () => handleClear().then(() => show("已清空"))
-  );
+  const [sendingMailId, setSendingMailId] = useState<number | null>(null);
+  const { platform } = useTranslatePlatform();
+  const { platform: aiPlatform } = useAiPlatform();
+  const { receiverEmails } = useEmailSettings();
+  const { smtpHost, smtpPort, smtpUsername, smtpPassword, smtpUseTls } = useSmtpSettings();
 
   // 失焦隐藏由 Rust 后端的 on_window_event 处理
 
@@ -141,14 +564,62 @@ function PopupPage() {
     getCurrentWindow().hide();
   };
 
+  const onOpenSettings = async () => {
+    localStorage.setItem(OPEN_ROUTE_KEY, "#/settings");
+    await invoke("open_main_window");
+    getCurrentWindow().hide();
+  };
+
   const onQuit = () => invoke("quit_app");
 
   const recent = history.slice(0, 6);
   const truncate = (t: string, max = 60) => t.length > max ? t.slice(0, max) + "…" : t;
 
+  const onTranslate = (text: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    openUrl(buildTranslateUrl(text, platform));
+  };
+
+  const onAskAi = (text: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    openUrl(buildAiUrl(text, aiPlatform));
+  };
+
+  const onSendMail = async (id: number, text: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const recipients = parseEmails(receiverEmails);
+    const port = Number(smtpPort);
+    if (recipients.length === 0 || !smtpHost || !smtpUsername || !smtpPassword || !port) {
+      show("请完善发信配置");
+      return;
+    }
+
+    setSendingMailId(id);
+    show("发送中...");
+
+    try {
+      await invoke("send_email", {
+        content: text,
+        recipients,
+        smtpHost,
+        smtpPort: port,
+        smtpUsername,
+        smtpPassword,
+        smtpUseTls,
+      });
+      show("邮件已发送");
+    } catch (err) {
+      show(`发送失败: ${String(err)}`);
+    } finally {
+      setSendingMailId(null);
+    }
+  };
+
+  const platformInfo = PLATFORM_OPTIONS.find((o) => o.value === platform)!;
+  const aiInfo = AI_OPTIONS.find((o) => o.value === aiPlatform)!;
+
   // 点击 popup 容器空白处隐藏窗口
   const handlePopupClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    // 如果点击的是容器本身（不是按钮、列表项等可交互元素）
     if (e.target === e.currentTarget) {
       getCurrentWindow().hide();
     }
@@ -161,7 +632,11 @@ function PopupPage() {
       {/* 标题栏 */}
       <div className="popup-header" onClick={() => getCurrentWindow().hide()}>
         <span className="popup-title">📋 Clipto</span>
-        <span className="popup-count">{history.length} 条</span>
+        <span
+          className="popup-count popup-count-link"
+          onClick={(e) => { e.stopPropagation(); onOpenMain(); }}
+          title="查看全部记录"
+        >{history.length} 条 ›</span>
       </div>
 
       {/* 最近记录 */}
@@ -173,19 +648,46 @@ function PopupPage() {
           </div>
         ) : (
           recent.map((item) => (
-            <button
-              key={item.id}
-              className={`popup-item ${copiedId === item.id ? "copied" : ""}`}
-              onClick={() => onCopy(item)}
-              title={item.content}
-            >
-              <span className="popup-item-text">{truncate(item.content)}</span>
-              <span className="popup-item-time">{item.timestamp.slice(11, 16)}</span>
-            </button>
+            <div key={item.id} className="popup-item-row">
+              <button
+                className={`popup-item ${copiedId === item.id ? "copied" : ""}`}
+                onClick={() => onCopy(item)}
+                title={item.content}
+              >
+                <span className="popup-item-text">{truncate(item.content)}</span>
+                <span className="popup-item-time">{item.timestamp.slice(11, 16)}</span>
+              </button>
+              <button
+                className="popup-translate-btn"
+                onClick={(e) => onTranslate(item.content, e)}
+                title={`用 ${platformInfo.label} 翻译`}
+              >🌐</button>
+              <button
+                className="popup-ai-btn"
+                onClick={(e) => onAskAi(item.content, e)}
+                title={`用 ${aiInfo.label} 打开`}
+              >🤖</button>
+              <button
+                className="popup-email-btn"
+                onClick={(e) => onSendMail(item.id, item.content, e)}
+                title={sendingMailId === item.id ? "发送中..." : "发送到邮箱"}
+                disabled={sendingMailId === item.id}
+              >{sendingMailId === item.id ? "⏳" : "📧"}</button>
+            </div>
           ))
         )}
       </div>
-      <div className="popup-copyright">© 2026 junler</div>
+      <div
+        className="popup-copyright popup-copyright-link"
+        onClick={async (e) => {
+          e.stopPropagation();
+          localStorage.setItem(OPEN_ROUTE_KEY, "#/settings");
+          localStorage.setItem(OPEN_SETTINGS_TAB_KEY, "about");
+          await invoke("open_main_window");
+          getCurrentWindow().hide();
+        }}
+        title="查看关于"
+      >© 2026 junler</div>
 
       {/* 底部操作栏 */}
       <div className="popup-footer">
@@ -193,14 +695,13 @@ function PopupPage() {
           📂 查看全部
         </button>
         <div className="popup-footer-divider" />
-        <button className="popup-footer-btn danger" onClick={openClearDialog}>
-          🗑 清空
+        <button className="popup-footer-btn" onClick={onOpenSettings}>
+          ⚙️ 设置
         </button>
         <button className="popup-footer-btn danger" onClick={onQuit}>
           ⏻ 退出
         </button>
       </div>
-      {ClearDialog}
     </div>
   );
 }
@@ -280,7 +781,12 @@ function PreviewPanel({ item, onClose, onCopy, copied, onUpdate, onReset }: {
 function MainPage() {
   const { history, handleCopy, handleDelete, handleClear, handlePin, handleUpdate, handleReset } = useClipboard("main");
   const { toast, show } = useToast();
+  const { platform } = useTranslatePlatform();
+  const { platform: aiPlatform } = useAiPlatform();
+  const { receiverEmails } = useEmailSettings();
+  const { smtpHost, smtpPort, smtpUsername, smtpPassword, smtpUseTls } = useSmtpSettings();
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [sendingMailId, setSendingMailId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [previewItem, setPreviewItem] = useState<ClipboardItem | null>(null);
   const { open: openClearDialog, Dialog: ClearDialog } = useConfirmDialog(
@@ -299,9 +805,45 @@ function MainPage() {
     setPreviewItem((prev) => (prev?.id === item.id ? null : item));
   };
 
+  const onOpenSettings = () => {
+    window.location.hash = "#/settings";
+  };
+
   const filtered = history.filter((item) =>
     item.content.toLowerCase().includes(search.toLowerCase())
   );
+
+  const platformInfo = PLATFORM_OPTIONS.find((o) => o.value === platform)!;
+  const aiInfo = AI_OPTIONS.find((o) => o.value === aiPlatform)!;
+
+  const onSendMail = async (id: number, content: string) => {
+    const recipients = parseEmails(receiverEmails);
+    const port = Number(smtpPort);
+    if (recipients.length === 0 || !smtpHost || !smtpUsername || !smtpPassword || !port) {
+      show("请完善发信配置");
+      return;
+    }
+
+    setSendingMailId(id);
+    show("发送中...");
+
+    try {
+      await invoke("send_email", {
+        content,
+        recipients,
+        smtpHost,
+        smtpPort: port,
+        smtpUsername,
+        smtpPassword,
+        smtpUseTls,
+      });
+      show("邮件已发送");
+    } catch (err) {
+      show(`发送失败: ${String(err)}`);
+    } finally {
+      setSendingMailId(null);
+    }
+  };
 
   return (
     <div className="app">
@@ -314,6 +856,9 @@ function MainPage() {
         </div>
         <div className="header-actions">
           <span className="count-badge">{history.length} 条记录</span>
+          <button className="btn-settings" onClick={onOpenSettings}>
+            ⚙️ 设置
+          </button>
           <button className="btn-clear" onClick={openClearDialog}>
             🗑 清空
           </button>
@@ -373,6 +918,22 @@ function MainPage() {
                     title="复制"
                   >{copiedId === item.id ? "✅" : "📋"}</button>
                   <button
+                    className="btn-icon btn-translate"
+                    onClick={() => openUrl(buildTranslateUrl(item.content, platform))}
+                    title={`用 ${platformInfo.label} 翻译`}
+                  >🌐</button>
+                  <button
+                    className="btn-icon btn-ai"
+                    onClick={() => openUrl(buildAiUrl(item.content, aiPlatform))}
+                    title={`用 ${aiInfo.label} 打开`}
+                  >🤖</button>
+                  <button
+                    className="btn-icon btn-email"
+                    onClick={() => onSendMail(item.id, item.content)}
+                    title={sendingMailId === item.id ? "发送中..." : "发送到邮箱"}
+                    disabled={sendingMailId === item.id}
+                  >{sendingMailId === item.id ? "⏳" : "📧"}</button>
+                  <button
                     className="btn-icon btn-delete"
                     onClick={() => handleDelete(item.id)}
                     title="删除"
@@ -406,8 +967,36 @@ function MainPage() {
 
 // ─── 路由入口 ─────────────────────────────────────────────────
 function App() {
-  const isMain = window.location.hash === "#/main";
-  return isMain ? <MainPage /> : <PopupPage />;
+  const [route, setRoute] = useState(() => window.location.hash || "#/popup");
+
+  useEffect(() => {
+    const syncRoute = () => setRoute(window.location.hash || "#/popup");
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === OPEN_ROUTE_KEY && e.newValue) {
+        window.location.hash = e.newValue;
+        localStorage.removeItem(OPEN_ROUTE_KEY);
+        syncRoute();
+      }
+    };
+
+    const pendingRoute = localStorage.getItem(OPEN_ROUTE_KEY);
+    if (pendingRoute) {
+      window.location.hash = pendingRoute;
+      localStorage.removeItem(OPEN_ROUTE_KEY);
+      syncRoute();
+    }
+
+    window.addEventListener("hashchange", syncRoute);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("hashchange", syncRoute);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
+  if (route === "#/main") return <MainPage />;
+  if (route === "#/settings") return <SettingsPage onBack={() => { window.location.hash = "#/main"; }} />;
+  return <PopupPage />;
 }
 
 export default App;

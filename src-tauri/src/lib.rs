@@ -1,5 +1,8 @@
 use arboard::Clipboard;
 use chrono::Local;
+use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::client::{Tls, TlsParameters};
+use lettre::{Message, SmtpTransport, Transport};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::{fs, path::PathBuf};
@@ -190,6 +193,74 @@ fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// 通过 SMTP 发送邮件
+#[tauri::command]
+fn send_email(
+    content: String,
+    recipients: Vec<String>,
+    smtp_host: String,
+    smtp_port: u16,
+    smtp_username: String,
+    smtp_password: String,
+    smtp_use_tls: bool,
+) -> Result<(), String> {
+    if recipients.is_empty() {
+        return Err("请至少填写一个接收邮箱".to_string());
+    }
+
+    if smtp_username.trim().is_empty() {
+        return Err("请先设置 SMTP 用户名".to_string());
+    }
+
+    let mut builder = Message::builder()
+        .from(
+            smtp_username
+                .parse()
+                .map_err(|e| format!("SMTP 用户名需为邮箱格式: {e}"))?,
+        )
+        .subject("Clipto 分享内容")
+        .to(
+            recipients[0]
+                .parse()
+                .map_err(|e| format!("主收件人邮箱格式不正确: {e}"))?,
+        );
+
+    for cc in recipients.iter().skip(1) {
+        builder = builder.cc(
+            cc.parse()
+                .map_err(|e| format!("抄送邮箱格式不正确: {e}"))?,
+        );
+    }
+
+    let email = builder
+        .body(content)
+        .map_err(|e| format!("邮件内容构建失败: {e}"))?;
+
+    let creds = Credentials::new(smtp_username.clone(), smtp_password);
+
+    let mailer = if smtp_use_tls {
+        let tls_params = TlsParameters::new(smtp_host.clone())
+            .map_err(|e| format!("TLS 配置失败: {e}"))?;
+        SmtpTransport::builder_dangerous(smtp_host)
+            .port(smtp_port)
+            .tls(Tls::Required(tls_params))
+            .credentials(creds)
+            .build()
+    } else {
+        SmtpTransport::builder_dangerous(smtp_host)
+            .port(smtp_port)
+            .tls(Tls::None)
+            .credentials(creds)
+            .build()
+    };
+
+    mailer
+        .send(&email)
+        .map_err(|e| format!("邮件发送失败: {e}"))?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 确定数据文件路径：~/.clipto/history.json
@@ -248,6 +319,7 @@ pub fn run() {
             poll_clipboard,
             open_main_window,
             quit_app,
+            send_email,
         ])
         .setup(|app| {
             // 隐藏 Dock 图标（纯菜单栏应用）
