@@ -26,12 +26,10 @@ function useClipboard(mode: "popup" | "main" = "popup") {
     try {
       if (mode === "popup") {
         // popup 负责检测新内容并写入后端
-        const newItem = await invoke<ClipboardItem | null>("poll_clipboard");
-        if (newItem) {
-          // 直接从后端拉取最新列表，确保置顶顺序正确
-          const data = await invoke<ClipboardItem[]>("get_history");
-          setHistory(data);
-        }
+        await invoke<ClipboardItem | null>("poll_clipboard");
+        // 每次轮询都同步最新列表，确保主窗口的删除/清空等操作也能及时反映
+        const data = await invoke<ClipboardItem[]>("get_history");
+        setHistory(data);
       } else {
         // 主窗口直接从后端拉取最新完整列表，避免因 last_content 已被 popup 更新而漏掉新条目
         const data = await invoke<ClipboardItem[]>("get_history");
