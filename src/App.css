@@ -1306,3 +1306,86 @@ body {
     background: rgba(240,68,56,.18);
   }
 }
+
+/* ===== Shortcut Settings ===== */
+.shortcut-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.shortcut-input {
+  flex: 1;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+.shortcut-preview {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  border-radius: 6px;
+  padding: 4px 10px;
+  white-space: nowrap;
+  min-width: 80px;
+  text-align: center;
+}
+
+.shortcut-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.shortcut-save-btn {
+  padding: 7px 18px;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.shortcut-save-btn:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.shortcut-save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.shortcut-msg {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.shortcut-hint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.shortcut-hint-row {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.shortcut-hint-key {
+  width: 70px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.shortcut-hint-val {
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}

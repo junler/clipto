@@ -9,8 +9,9 @@ use std::{fs, path::PathBuf};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, State,
+    Emitter, Manager, State,
 };
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipboardItem {
@@ -26,6 +27,8 @@ pub struct AppState {
     pub last_content: Mutex<String>,
     pub next_id: Mutex<u64>,
     pub data_path: PathBuf,
+    pub shortcut_ai: Mutex<String>,
+    pub shortcut_translate: Mutex<String>,
 }
 
 /// 从磁盘加载历史记录
@@ -177,6 +180,66 @@ fn poll_clipboard(state: State<AppState>) -> Result<Option<ClipboardItem>, Strin
     Ok(Some(new_item))
 }
 
+/// 获取当前快捷键配置
+#[tauri::command]
+fn get_shortcuts(state: State<AppState>) -> (String, String) {
+    let ai = state.shortcut_ai.lock().unwrap().clone();
+    let translate = state.shortcut_translate.lock().unwrap().clone();
+    (ai, translate)
+}
+
+/// 更新快捷键配置并重新注册
+#[tauri::command]
+fn set_shortcuts(
+    ai_shortcut: String,
+    translate_shortcut: String,
+    state: State<AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    // 注销所有已注册的快捷键
+    let _ = app.global_shortcut().unregister_all();
+
+    // 更新状态
+    *state.shortcut_ai.lock().unwrap() = ai_shortcut.clone();
+    *state.shortcut_translate.lock().unwrap() = translate_shortcut.clone();
+
+    // 重新注册 AI 快捷键
+    if !ai_shortcut.is_empty() {
+        let shortcut: Shortcut = ai_shortcut.parse().map_err(|e| format!("AI 快捷键格式错误: {e}"))?;
+        let app_handle = app.clone();
+        app.global_shortcut()
+            .on_shortcut(shortcut, move |_app, _sc, event| {
+                if event.state == ShortcutState::Pressed {
+                    let clipboard_text = Clipboard::new()
+                        .ok()
+                        .and_then(|mut cb| cb.get_text().ok())
+                        .unwrap_or_default();
+                    let _ = app_handle.emit("shortcut-open-ai", clipboard_text);
+                }
+            })
+            .map_err(|e| format!("注册 AI 快捷键失败: {e}"))?;
+    }
+
+    // 重新注册翻译快捷键
+    if !translate_shortcut.is_empty() {
+        let shortcut: Shortcut = translate_shortcut.parse().map_err(|e| format!("翻译快捷键格式错误: {e}"))?;
+        let app_handle = app.clone();
+        app.global_shortcut()
+            .on_shortcut(shortcut, move |_app, _sc, event| {
+                if event.state == ShortcutState::Pressed {
+                    let clipboard_text = Clipboard::new()
+                        .ok()
+                        .and_then(|mut cb| cb.get_text().ok())
+                        .unwrap_or_default();
+                    let _ = app_handle.emit("shortcut-open-translate", clipboard_text);
+                }
+            })
+            .map_err(|e| format!("注册翻译快捷键失败: {e}"))?;
+    }
+
+    Ok(())
+}
+
 /// 打开主窗口（查看全部）
 #[tauri::command]
 fn open_main_window(app: tauri::AppHandle) {
@@ -300,13 +363,20 @@ pub fn run() {
 
     let actual_next_id = loaded_history.iter().map(|i| i.id).max().unwrap_or(0) + 1;
 
+    // 默认快捷键
+    let default_ai_shortcut = "CommandOrControl+Shift+G".to_string();
+    let default_translate_shortcut = "CommandOrControl+Shift+T".to_string();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState {
             history: Mutex::new(loaded_history),
             last_content: Mutex::new(initial_last),
             next_id: Mutex::new(actual_next_id),
             data_path,
+            shortcut_ai: Mutex::new(default_ai_shortcut.clone()),
+            shortcut_translate: Mutex::new(default_translate_shortcut.clone()),
         })
         .invoke_handler(tauri::generate_handler![
             get_history,
@@ -320,11 +390,41 @@ pub fn run() {
             open_main_window,
             quit_app,
             send_email,
+            get_shortcuts,
+            set_shortcuts,
         ])
-        .setup(|app| {
+        .setup(move |app| {
             // 隐藏 Dock 图标（纯菜单栏应用）
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            // 注册全局快捷键
+            {
+                let app_handle = app.handle().clone();
+                let ai_sc: Shortcut = default_ai_shortcut.parse().unwrap();
+                let _ = app.global_shortcut().on_shortcut(ai_sc, move |_app, _sc, event| {
+                    if event.state == ShortcutState::Pressed {
+                        let clipboard_text = Clipboard::new()
+                            .ok()
+                            .and_then(|mut cb| cb.get_text().ok())
+                            .unwrap_or_default();
+                        let _ = app_handle.emit("shortcut-open-ai", clipboard_text);
+                    }
+                });
+            }
+            {
+                let app_handle = app.handle().clone();
+                let tr_sc: Shortcut = default_translate_shortcut.parse().unwrap();
+                let _ = app.global_shortcut().on_shortcut(tr_sc, move |_app, _sc, event| {
+                    if event.state == ShortcutState::Pressed {
+                        let clipboard_text = Clipboard::new()
+                            .ok()
+                            .and_then(|mut cb| cb.get_text().ok())
+                            .unwrap_or_default();
+                        let _ = app_handle.emit("shortcut-open-translate", clipboard_text);
+                    }
+                });
+            }
 
             let quit = MenuItemBuilder::with_id("quit", "退出 Clipto").build(app)?;
             let menu = MenuBuilder::new(app).items(&[&quit]).build()?;

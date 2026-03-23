@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 interface ClipboardItem {
@@ -164,6 +165,8 @@ const SMTP_PORT_KEY = "clipto_smtp_port";
 const SMTP_USERNAME_KEY = "clipto_smtp_username";
 const SMTP_PASSWORD_KEY = "clipto_smtp_password";
 const SMTP_USE_TLS_KEY = "clipto_smtp_use_tls";
+const SHORTCUT_AI_KEY = "clipto_shortcut_ai";
+const SHORTCUT_TRANSLATE_KEY = "clipto_shortcut_translate";
 
 function useTranslatePlatform() {
   const [platform, setPlatformState] = useState<TranslatePlatform>(
@@ -173,6 +176,15 @@ function useTranslatePlatform() {
     localStorage.setItem(TRANSLATE_STORAGE_KEY, p);
     setPlatformState(p);
   };
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === TRANSLATE_STORAGE_KEY && e.newValue) {
+        setPlatformState(e.newValue as TranslatePlatform);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
   return { platform, setPlatform };
 }
 
@@ -184,6 +196,15 @@ function useAiPlatform() {
     localStorage.setItem(AI_STORAGE_KEY, p);
     setPlatformState(p);
   };
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === AI_STORAGE_KEY && e.newValue) {
+        setPlatformState(e.newValue as AiPlatform);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
   return { platform, setPlatform };
 }
 
@@ -248,6 +269,27 @@ function useSmtpSettings() {
   };
 }
 
+function useShortcutSettings() {
+  const [shortcutAi, setShortcutAiState] = useState<string>(
+    () => localStorage.getItem(SHORTCUT_AI_KEY) ?? "CommandOrControl+Shift+G"
+  );
+  const [shortcutTranslate, setShortcutTranslateState] = useState<string>(
+    () => localStorage.getItem(SHORTCUT_TRANSLATE_KEY) ?? "CommandOrControl+Shift+T"
+  );
+
+  const setShortcutAi = (value: string) => {
+    localStorage.setItem(SHORTCUT_AI_KEY, value);
+    setShortcutAiState(value);
+  };
+
+  const setShortcutTranslate = (value: string) => {
+    localStorage.setItem(SHORTCUT_TRANSLATE_KEY, value);
+    setShortcutTranslateState(value);
+  };
+
+  return { shortcutAi, setShortcutAi, shortcutTranslate, setShortcutTranslate };
+}
+
 function parseEmails(raw: string): string[] {
   return raw
     .split(/[\n,;]+/)
@@ -258,11 +300,11 @@ function parseEmails(raw: string): string[] {
 function buildTranslateUrl(text: string, platform: TranslatePlatform): string {
   const encoded = encodeURIComponent(text);
   switch (platform) {
-    case "google":  return `https://translate.google.com/?sl=auto&tl=zh-CN&text=${encoded}&op=translate`;
-    case "deepl":   return `https://www.deepl.com/translator#auto/zh/${encoded}`;
-    case "bing":    return `https://www.bing.com/translator?text=${encoded}&from=auto&to=zh-Hans`;
-    case "youdao":  return `https://fanyi.youdao.com/result?word=${encoded}&l=auto2zh-CHS`;
-    case "baidu":   return `https://fanyi.baidu.com/#auto/zh/${encoded}`;
+    case "google":  return `https://translate.google.com/?sl=auto&tl=auto&text=${encoded}&op=translate`;
+    case "deepl":   return `https://www.deepl.com/translator#auto/auto/${encoded}`;
+    case "bing":    return `https://www.bing.com/translator?text=${encoded}&from=auto&to=auto-detect`;
+    case "youdao":  return `https://fanyi.youdao.com/#auto/auto/${encoded}`;
+    case "baidu":   return `https://fanyi.baidu.com/#auto/auto/${encoded}`;
   }
 }
 
@@ -294,12 +336,32 @@ function buildAiUrl(text: string, platform: AiPlatform): string {
   }
 }
 
+// ─── 快捷键格式化显示 ─────────────────────────────────────────
+function formatShortcut(raw: string): string {
+  if (!raw.trim()) return "（未设置）";
+  return raw
+    .split("+")
+    .map((part) => {
+      switch (part.trim()) {
+        case "CommandOrControl": return "⌘/Ctrl";
+        case "Command":         return "⌘";
+        case "Control":         return "Ctrl";
+        case "Shift":           return "⇧";
+        case "Alt":             return "⌥/Alt";
+        case "Meta":            return "⊞/⌘";
+        default:                return part.trim().toUpperCase();
+      }
+    })
+    .join(" + ");
+}
+
 // ─── 设置页 ───────────────────────────────────────────────────
-type SettingsTab = "translate" | "ai" | "email" | "about";
+type SettingsTab = "translate" | "ai" | "shortcuts" | "email" | "about";
 
 const SETTINGS_NAV: { key: SettingsTab; icon: string; label: string }[] = [
   { key: "translate", icon: "🌐", label: "翻译平台" },
   { key: "ai",        icon: "🤖", label: "AI 助手" },
+  { key: "shortcuts", icon: "⌨️",  label: "快捷键" },
   { key: "email",     icon: "📧", label: "邮件配置" },
   { key: "about",     icon: "ℹ️",  label: "关于" },
 ];
@@ -320,6 +382,30 @@ function SettingsPage({ onBack }: { onBack: () => void }) {
     smtpPassword, setSmtpPassword,
     smtpUseTls, setSmtpUseTls,
   } = useSmtpSettings();
+  const { shortcutAi, setShortcutAi, shortcutTranslate, setShortcutTranslate } = useShortcutSettings();
+  const [shortcutSaving, setShortcutSaving] = useState(false);
+  const [shortcutMsg, setShortcutMsg] = useState<string | null>(null);
+  const [editAi, setEditAi] = useState(shortcutAi);
+  const [editTranslate, setEditTranslate] = useState(shortcutTranslate);
+
+  const saveShortcuts = async () => {
+    setShortcutSaving(true);
+    setShortcutMsg(null);
+    try {
+      await invoke("set_shortcuts", {
+        aiShortcut: editAi,
+        translateShortcut: editTranslate,
+      });
+      setShortcutAi(editAi);
+      setShortcutTranslate(editTranslate);
+      setShortcutMsg("✅ 快捷键已保存并生效");
+    } catch (err) {
+      setShortcutMsg(`❌ ${String(err)}`);
+    } finally {
+      setShortcutSaving(false);
+      setTimeout(() => setShortcutMsg(null), 3000);
+    }
+  };
 
   return (
     <div className="settings-page">
@@ -392,6 +478,73 @@ function SettingsPage({ onBack }: { onBack: () => void }) {
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* 快捷键 */}
+          {activeTab === "shortcuts" && (
+            <div className="settings-section-wrap">
+              <div className="settings-section-title">全局快捷键</div>
+              <p className="settings-section-desc">
+                在任意应用中按下快捷键，将自动读取当前剪切板内容并发送到对应平台。
+                修改后点击保存立即生效，无需重启。
+              </p>
+
+              <div className="settings-form-group">
+                <label className="settings-input-label">🤖 发送到 AI 助手</label>
+                <div className="shortcut-input-row">
+                  <input
+                    className="settings-input shortcut-input"
+                    type="text"
+                    placeholder="例如 CommandOrControl+Shift+A"
+                    value={editAi}
+                    onChange={(e) => setEditAi(e.target.value)}
+                  />
+                  <span className="shortcut-preview">{formatShortcut(editAi)}</span>
+                </div>
+              </div>
+
+              <div className="settings-form-group" style={{ marginTop: 16 }}>
+                <label className="settings-input-label">🌐 发送到翻译平台</label>
+                <div className="shortcut-input-row">
+                  <input
+                    className="settings-input shortcut-input"
+                    type="text"
+                    placeholder="例如 CommandOrControl+Shift+T"
+                    value={editTranslate}
+                    onChange={(e) => setEditTranslate(e.target.value)}
+                  />
+                  <span className="shortcut-preview">{formatShortcut(editTranslate)}</span>
+                </div>
+              </div>
+
+              <div className="shortcut-actions">
+                <button
+                  className="shortcut-save-btn"
+                  onClick={saveShortcuts}
+                  disabled={shortcutSaving}
+                >
+                  {shortcutSaving ? "保存中…" : "保存快捷键"}
+                </button>
+                {shortcutMsg && <span className="shortcut-msg">{shortcutMsg}</span>}
+              </div>
+
+              <div className="settings-divider" />
+              <div className="settings-section-title" style={{ fontSize: 13 }}>格式说明</div>
+              <div className="shortcut-hint-list">
+                {[
+                  ["修饰键", "CommandOrControl · Shift · Alt · Meta"],
+                  ["字母键", "A–Z"],
+                  ["功能键", "F1–F12"],
+                  ["组合示例", "CommandOrControl+Shift+A"],
+                ].map(([k, v]) => (
+                  <div key={k} className="shortcut-hint-row">
+                    <span className="shortcut-hint-key">{k}</span>
+                    <span className="shortcut-hint-val">{v}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="settings-hint">💡 macOS 上 CommandOrControl 对应 ⌘ Command 键；Windows/Linux 对应 Ctrl 键。</p>
             </div>
           )}
 
@@ -989,6 +1142,31 @@ function App() {
     return () => {
       window.removeEventListener("hashchange", syncRoute);
       window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
+  // 监听全局快捷键事件（由 Rust 后端触发）
+  // 只在 popup 窗口中处理，避免多窗口重复触发
+  useEffect(() => {
+    if (getCurrentWindow().label !== "popup") return;
+
+    const unlistenAi = listen<string>("shortcut-open-ai", (event) => {
+      const text = event.payload;
+      if (!text.trim()) return;
+      const aiPlatform = (localStorage.getItem(AI_STORAGE_KEY) as AiPlatform) ?? "chatgpt";
+      openUrl(buildAiUrl(text, aiPlatform));
+    });
+
+    const unlistenTranslate = listen<string>("shortcut-open-translate", (event) => {
+      const text = event.payload;
+      if (!text.trim()) return;
+      const translatePlatform = (localStorage.getItem(TRANSLATE_STORAGE_KEY) as TranslatePlatform) ?? "google";
+      openUrl(buildTranslateUrl(text, translatePlatform));
+    });
+
+    return () => {
+      unlistenAi.then((fn) => fn());
+      unlistenTranslate.then((fn) => fn());
     };
   }, []);
 
