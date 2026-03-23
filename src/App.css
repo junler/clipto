@@ -226,6 +226,52 @@ body {
   opacity: 0.88;
 }
 
+/* ===== Sync Email Dialog ===== */
+.sync-email-dialog-body {
+  min-width: 320px;
+}
+
+.sync-email-count-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  width: 100%;
+  justify-content: center;
+}
+
+.sync-email-count-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.sync-email-count-input {
+  width: 90px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  text-align: center;
+  outline: none;
+  transition: border-color .15s;
+}
+
+.sync-email-count-input:focus {
+  border-color: var(--primary);
+}
+
+.sync-email-confirm-btn {
+  background: var(--primary) !important;
+}
+
+.sync-email-confirm-btn:hover {
+  opacity: 0.88;
+}
+
 /* ===== Search Bar ===== */
 .search-bar {
   display: flex;

@@ -111,9 +111,11 @@ function Toast({ msg }: { msg: string }) {
 
 function useToast() {
   const [toast, setToast] = useState<string | null>(null);
-  const show = (msg: string) => {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const show = (msg: string, duration = 1600) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
     setToast(msg);
-    setTimeout(() => setToast(null), 1600);
+    timerRef.current = setTimeout(() => setToast(null), duration);
   };
   return { toast, show };
 }
@@ -167,6 +169,7 @@ const SMTP_PASSWORD_KEY = "clipto_smtp_password";
 const SMTP_USE_TLS_KEY = "clipto_smtp_use_tls";
 const SHORTCUT_AI_KEY = "clipto_shortcut_ai";
 const SHORTCUT_TRANSLATE_KEY = "clipto_shortcut_translate";
+const SYNC_EMAIL_COUNT_KEY = "clipto_sync_email_count";
 
 function useTranslatePlatform() {
   const [platform, setPlatformState] = useState<TranslatePlatform>(
@@ -940,9 +943,60 @@ function MainPage() {
   const [sendingMailId, setSendingMailId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [previewItem, setPreviewItem] = useState<ClipboardItem | null>(null);
+  const [syncDialogOpen, setSyncDialogOpen] = useState(false);
+  const [syncCount, setSyncCount] = useState<number>(() => {
+    const stored = localStorage.getItem(SYNC_EMAIL_COUNT_KEY);
+    return stored !== null ? Number(stored) : 1000;
+  });
+  const [syncing, setSyncing] = useState(false);
+  const syncDialogRef = useRef<HTMLDialogElement>(null);
   const { open: openClearDialog, Dialog: ClearDialog } = useConfirmDialog(
     () => handleClear().then(() => show("已清空"))
   );
+
+  useEffect(() => {
+    if (syncDialogOpen) syncDialogRef.current?.showModal();
+    else syncDialogRef.current?.close();
+  }, [syncDialogOpen]);
+
+  const onSyncAllToEmail = async () => {
+    const recipients = parseEmails(receiverEmails);
+    const port = Number(smtpPort);
+    if (recipients.length === 0 || !smtpHost || !smtpUsername || !smtpPassword || !port) {
+      show("请先完善邮件配置（设置 › 邮件配置）");
+      return;
+    }
+    setSyncDialogOpen(true);
+  };
+
+  const doSyncAllToEmail = async () => {
+    setSyncDialogOpen(false);
+    const items = syncCount > 0 ? history.slice(0, syncCount) : history;
+    if (items.length === 0) { show("暂无记录可同步"); return; }
+    const recipients = parseEmails(receiverEmails);
+    const port = Number(smtpPort);
+    setSyncing(true);
+    show(`同步中，共 ${items.length} 条…`);
+    try {
+      const content = items
+        .map((it, i) => `[${i + 1}] ${it.timestamp}\n${it.content}`)
+        .join("\n\n---\n\n");
+      await invoke("send_email", {
+        content,
+        recipients,
+        smtpHost,
+        smtpPort: port,
+        smtpUsername,
+        smtpPassword,
+        smtpUseTls,
+      });
+      show(`已同步 ${items.length} 条记录到邮箱`);
+    } catch (err) {
+      show(`同步失败: ${String(err)}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const onCopy = async (item: ClipboardItem) => {
     const id = await handleCopy(item);
@@ -1007,6 +1061,14 @@ function MainPage() {
         </div>
         <div className="header-actions">
           <span className="count-badge">{history.length} 条记录</span>
+          <button
+            className="btn-settings"
+            onClick={onSyncAllToEmail}
+            disabled={syncing}
+            title="同步剪贴板记录到邮箱"
+          >
+            {syncing ? "⏳ 同步中…" : "📤 同步到邮件"}
+          </button>
           <button className="btn-settings" onClick={onOpenSettings}>
             ⚙️ 设置
           </button>
@@ -1112,6 +1174,48 @@ function MainPage() {
         )}
       </div>
       {ClearDialog}
+
+      {/* 同步到邮件对话框 */}
+      <dialog
+        ref={syncDialogRef}
+        className="confirm-dialog"
+        onClose={() => setSyncDialogOpen(false)}
+      >
+        <div className="confirm-dialog-body sync-email-dialog-body">
+          <p className="confirm-dialog-icon">📤</p>
+          <p className="confirm-dialog-title">同步剪贴板到邮件</p>
+          <p className="confirm-dialog-desc">
+            数量留空或填 <strong>0</strong> 表示同步全部 {history.length} 条。
+          </p>
+          <div className="sync-email-count-row">
+            <label className="sync-email-count-label">同步最新</label>
+            <input
+              className="sync-email-count-input"
+              type="number"
+              min={0}
+              max={history.length}
+              value={syncCount === 0 ? "" : syncCount}
+              placeholder={`0（全部 ${history.length} 条）`}
+              onChange={(e) => {
+                const v = Math.max(0, Number(e.target.value) || 0);
+                setSyncCount(v);
+                localStorage.setItem(SYNC_EMAIL_COUNT_KEY, String(v));
+              }}
+            />
+            <label className="sync-email-count-label">条</label>
+          </div>
+          <div className="confirm-dialog-actions">
+            <button
+              className="confirm-dialog-cancel"
+              onClick={() => setSyncDialogOpen(false)}
+            >取消</button>
+            <button
+              className="confirm-dialog-confirm sync-email-confirm-btn"
+              onClick={doSyncAllToEmail}
+            >确认同步</button>
+          </div>
+        </div>
+      </dialog>
     </div>
   );
 }
