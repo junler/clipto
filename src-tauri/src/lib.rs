@@ -446,9 +446,14 @@ pub fn run() {
                             if window.is_visible().unwrap_or(false) {
                                 let _ = window.hide();
                             } else {
-                                // position 是物理像素坐标，转换为逻辑坐标再定位
-                                // 避免第一次显示时因缩放因子未初始化导致位置偏差
-                                let scale = window.scale_factor().unwrap_or(2.0);
+                                // position 是物理像素坐标。使用点击点所在显示器的缩放系数，
+                                // 避免首次显示时 popup 仍沿用主屏缩放导致外接屏偏移。
+                                let scale = window
+                                    .monitor_from_point(position.x, position.y)
+                                    .ok()
+                                    .flatten()
+                                    .map(|m| m.scale_factor())
+                                    .unwrap_or_else(|| window.scale_factor().unwrap_or(2.0));
 
                                 // 转为逻辑坐标
                                 let click_lx = position.x / scale;

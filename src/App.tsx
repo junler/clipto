@@ -1126,11 +1126,6 @@ function MainPage() {
                     title={item.pinned ? "取消置顶" : "置顶"}
                   >📌</button>
                   <button
-                    className="btn-icon btn-copy"
-                    onClick={() => onCopy(item)}
-                    title="复制"
-                  >{copiedId === item.id ? "✅" : "📋"}</button>
-                  <button
                     className="btn-icon btn-translate"
                     onClick={() => openUrl(buildTranslateUrl(item.content, platform))}
                     title={`用 ${platformInfo.label} 翻译`}
